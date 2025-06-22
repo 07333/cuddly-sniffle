@@ -68,8 +68,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "Numbersf"
-          git config --global user.email "263623064@qq.com"
+          git config --global user.name "chengminghui06"
+          git config --global user.email "2581265887@qq.com"
 
       - name: Show selected inputs debug
         run: |
@@ -226,7 +226,7 @@ jobs:
       - name: Force ECN + Reduce overhead
         if: ${{ inputs.kernel_version == '6.6' || inputs.kernel_version == '6.1' }}
         run: |
-          cd "$CONFIG/kernel_platform/common/net/ipv4"
+          cd kernel_workspace/kernel_platform/common/net/ipv4
           sed -i 's/net->ipv4.sysctl_tcp_ecn = 2;/net->ipv4.sysctl_tcp_ecn = 1;/' tcp_ipv4.c
           grep "sysctl_tcp_ecn" tcp_ipv4.c
           grep -A6 '\.procname.*tcp_ecn' sysctl_net_ipv4.c
@@ -238,7 +238,7 @@ jobs:
       - name: Run sed and perl Commands
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          cd kernel_workspace/kernel_platform
           
           echo "Running sed commands..."
 
