@@ -172,7 +172,7 @@ jobs:
           
           echo "Applying manager SUSFS patches..."
           #cp ../../../kernel_patches/next/0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch ./
-          #patch -p1 --fuzz=3 < kernel-patch-susfs-v1.5.7-to-KernelSU-Next.patch
+          #patch -p1 --fuzz=3 < 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch
           curl -Ls "https://raw.githubusercontent.com/KOWX712/files/main/0001-add-other-ksu-manager-support.patch" | patch -p1 --fuzz=3
           curl -Ls https://github.com/KernelSU-Next/KernelSU-Next/commit/30707682565083e497485edc4d7764924e2d042f.patch | patch -p1 --fuzz=3
           curl -Ls  | patch -p1 --fuzz=3
