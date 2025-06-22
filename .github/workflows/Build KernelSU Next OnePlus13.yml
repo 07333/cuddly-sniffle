@@ -2,32 +2,27 @@ name: Build KernelSU Next SUSFS OnePlus 13
 on:
   workflow_dispatch:
     inputs:
-      CPU:
-        type: choice
+      CPU: 
         description: "分支"
         required: true
         default: sm8750
         
-      FEIL:
-        type: choice
+      FEIL: 
         description: "配置文件"
         required: true
         default: oneplus_13
         
-      CPUD:
-        type: choice
+      CPUD: 
         description: "处理器代号"
         required: true
         default: sun
         
-      ANDROID_VERSION:
-        type: choice
+      ANDROID_VERSION: 
         description: "内核初始安卓版本"
         required: true
         default: android15
         
       KERNEL_VERSION:
-       type: choice
        description: "内核版本"
        required: true
        default: "6.6"
