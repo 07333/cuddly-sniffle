@@ -35,7 +35,7 @@ on:
         options:
           - gki
           - perf
-      FAST_BUILD
+      FAST_BUILD:
         type: boolean
         description: "是否使用极速构建？"
         required: false
