@@ -130,9 +130,9 @@ jobs:
           git add -A
           git commit -m "Force remove -dirty suffix from kernel version"
   
-      - name: Download manifest to .repo/manifests
-        id: fetch_manifest
-        run: |
+          - name: Download manifest to .repo/manifests
+          id: fetch_manifest
+          run: |
           feil="${{ github.event.inputs.FEIL }}"
           cpu="${{ github.event.inputs.CPU }}"
           mkdir -p .repo/manifests
