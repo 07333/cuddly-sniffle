@@ -246,9 +246,8 @@ jobs:
           echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_DEFAULT_TCP_CONG=bbr" >> ./common/arch/arm64/configs/gki_defconfig
           
-                - name: 🔧 Update compression algorithms (更新压缩算法)
-        if: ${{ inputs.enable_feature_y }}
-        run: |
+          - name: 🔧 Update compression algorithms
+           run: |
           cd kernel_workspace/kernel_platform/common
           
           # 更新LZ4实现
