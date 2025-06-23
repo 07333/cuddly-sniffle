@@ -140,8 +140,8 @@ jobs:
           curl -LO --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/oneplus/$cpu/$feil.xml"
           mv "$feil.xml" ".repo/manifests/${feil}.xml"
 
-      - name: Set up KernelSU Next
-        run: |
+          - name: Set up KernelSU Next
+          run: |
           cd kernel_workspace/kernel_platform
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           cd KernelSU-Next
