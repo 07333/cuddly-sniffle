@@ -119,9 +119,9 @@ jobs:
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
-      # 删除 -dirty 脏块
-      - name: Force remove -dirty suffix
-        run: |
+          # 删除 -dirty 脏块
+          - name: Force remove -dirty suffix
+          run: |
           cd kernel_workspace/kernel_platform
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
           sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
