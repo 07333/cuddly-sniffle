@@ -1,0 +1,466 @@
+name: ONEPLUS-KernelSU-Next
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      FEIL:
+        type: choice
+        description: "配置文件"
+        required: true
+        default: oneplus_13
+        options:
+          - oneplus_13
+          - oneplus_ace5_pro
+          - oneplus_13t
+          - oneplus_13s
+          - oneplus_pad_2_pro
+          - oneplus_pad_3
+      SUSFS_CI:
+        type: choice
+        description: "下载SUSFS模块调用方式"
+        required: true
+        default: CI
+        options:
+          - CI
+          - Release
+          - NoN          
+      LOCAL_VERSION:
+        description: '输入内核后缀名（如-v8）'
+        required: false
+        default: '-4k'
+        type: string
+      ENABLE_LTO:
+        description: '启用 LTO'
+        required: true
+        default: true
+        type: boolean
+      ZRAM:
+        type: boolean
+        description: "是否添加更多的ZRAM算法？"
+        required: true
+        default: true
+      KPM:
+        description: "是否启用KPM"
+        required: false
+        default: false
+        type: boolean        
+jobs:
+  get-config:
+    uses: ./.github/workflows/feil-map.yml
+    with:
+      FEIL: ${{ inputs.FEIL }}
+    secrets: inherit
+    
+  build:
+    needs: get-config
+    name: For ${{ inputs.FEIL }} KernelSU-Next
+    runs-on: ubuntu-latest
+    env:
+      CPU: ${{ needs.get-config.outputs.CPU }}
+      CPUD: ${{ needs.get-config.outputs.CPUD }}
+      ANDROID_VERSION: ${{ needs.get-config.outputs.ANDROID_VERSION }}
+      KERNEL_VERSION: ${{ needs.get-config.outputs.KERNEL_VERSION }}
+      KERNEL_NAME: ${{ needs.get-config.outputs.KERNEL_NAME }}
+      KERNEL_TIME: ${{ needs.get-config.outputs.KERNEL_TIME }}
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+      TOKEN: ${{ secrets.TOKEN }}
+    steps:
+      # ===== 初始化阶段 =====
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          
+      - name: Configure Git
+        run: |
+          git config --global user.name "QQQiuCi"
+          git config --global user.email "1136673807@qq.com"
+         
+      - name: Show selected inputs debug
+        run: |
+          echo "===== 构建参数配置 ====="
+          echo "设备配置 (FEIL): ${{ inputs.FEIL }}"
+          echo "CPU 架构: ${{ env.CPU }}"
+          echo "详细 CPU 信息: ${{ env.CPUD }}"
+          echo "Android 版本: ${{ env.ANDROID_VERSION }}"
+          echo "内核版本: ${{ env.KERNEL_VERSION }}"
+          echo "内核构建时间: ${{ env.KERNEL_TIME }}"
+          echo "自定义内核名称: ${{ env.KERNEL_NAME }}"
+          echo "内核后缀 (LOCAL_VERSION): ${{ github.event.inputs.LOCAL_VERSION }}"
+          echo "SUSFS 下载方式: ${{ github.event.inputs.SUSFS_CI }}"
+          echo "启用 ZRAM 增强: ${{ github.event.inputs.ZRAM }}"
+          echo "启用 LTO 优化: ${{ github.event.inputs.ENABLE_LTO }}"
+          echo "启用 KPM: ${{ github.event.inputs.KPM}}"
+          echo "========================="
+          
+      # ===== 源码准备 =====
+      - name: Checkout  
+        uses: actions/checkout@v4  
+
+      - name: Install Dependencies  
+        run: |  
+          echo "安装依赖..."
+          sudo apt-get update  
+          sudo apt-get install -y python3 git curl ccache libelf-dev jq
+          echo "✅ 依赖安装完成"
+
+      - name: Restore ccache
+        uses: actions/cache@v3
+        with:
+          path: /home/runner/.ccache
+          key: ${{ runner.os }}-${{ github.repository }}-v3
+          restore-keys: |
+            ${{ runner.os }}-${{ github.repository }}-
+            ${{ runner.os }}-
+            ccache-
+
+      - name: Setup ccache environment  
+        run: |  
+          echo "===== 配置CCache环境 ====="
+          echo "CCACHE_DIR=/home/runner/.ccache" >> $GITHUB_ENV  
+          echo "CCACHE_MAXSIZE=8G" >> $GITHUB_ENV  
+          echo "CCACHE_COMPILERCHECK=%compiler% -dumpmachine; %compiler% -dumpversion" >> $GITHUB_ENV  
+          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV  
+          echo "CCACHE_HARDLINK=true" >> $GITHUB_ENV  
+          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV  
+          echo "CCACHE_LOGFILE=${{ github.workspace }}/ccache.log" >> $GITHUB_ENV  
+          echo "/usr/lib/ccache" >> $GITHUB_PATH  
+          echo "✅ CCache环境配置完成"
+         
+      - name: Show ccache stats
+        run: |
+          echo "===== CCACHE 状态 ====="
+          ccache -sv || true
+          echo "======================="
+
+      - name: Install repo tool
+        run: |
+          echo "安装 repo 工具..."
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+          chmod a+x ~/repo
+          sudo mv ~/repo /usr/local/bin/repo
+          echo "✅ repo 工具安装完成"
+
+      - name: Initialize repo and sync
+        run: |
+          echo "初始化内核源码仓库..."
+          mkdir kernel_workspace && cd kernel_workspace
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ env.CPU }} -m ${{ inputs.FEIL }}.xml --depth=1
+          
+          echo "同步源码..."
+          repo --trace sync -c -j$(nproc --all) --no-tags
+          
+          echo "清理保护导出..."
+          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "无保护导出文件"
+          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "无保护导出文件"
+          echo "✅ 源码同步完成"
+         
+      - name: Set up KernelSU Next
+        run: |
+          echo "开始集成 KernelSU Next..."
+          cd kernel_workspace/kernel_platform
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          cd KernelSU-Next
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count next) "+" 10200)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          export KSU_VERSION=$KSU_VERSION
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+          echo "KernelSU Next 集成完成，版本号: $KSU_VERSION"
+
+      # ===== SUSFS 和补丁应用 =====
+      - name: Set up SUSFS & apply patches
+        run: |
+          echo "开始设置 SUSFS 和应用补丁..."
+
+          cd kernel_workspace
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          git clone --depth=1 https://github.com/WildPlusKernel/kernel_patches.git
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git
+          git clone --depth=1 https://github.com/AQ16/SM8750_patch.git
+          
+         
+          cd kernel_platform
+         
+          echo "复制SUSFS补丁..."
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+          cp ../kernel_patches/next/syscall_hooks.patch ./common/
+          cp ../kernel_patches/next/0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch ./KernelSU-Next/
+          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          cp ../SM8750_patch/Test/SM8750.patch ./common/
+         
+          # ZRAM 增强处理
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "正在添加ZRAM相关补丁和文件..."
+            cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux || true
+            cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib || true
+            cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto || true
+            cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/ || true
+            echo "ZRAM 增强添加完成✅"
+          fi         
+         
+          cd ./KernelSU-Next
+          patch -p1 < 0001-kernel-implement-susfs-v1.5.8-KernelSU-Next-v1.0.8.patch || true
+          cd ../common
+          if [[ "${{ inputs.FEIL }}" == "oneplus_13" || "${{ inputs.FEIL }}" == "oneplus_ace5_pro" ]]; then
+            echo "为 ${{ inputs.FEIL }} 设备调整 SUSFS 补丁..."
+            sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
+            sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
+          fi
+          patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+          cp ../../kernel_patches/69_hide_stuff.patch ./
+          patch -p1 -F 3 < 69_hide_stuff.patch
+          patch -p1 -F 3 < syscall_hooks.patch
+          patch -p1 -F 3 < SM8750.patch
+          echo "✅ SUSFS 和 syscall_hooks patch 应用完成"
+
+      - name: Apply ZRAM
+        if: ${{ github.event.inputs.ZRAM == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          echo "应用ZRAM优化补丁..."
+          
+          echo "复制lz4kd补丁..."
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
+          patch -p1 -F 3 < lz4kd.patch
+          echo "✅ lz4kd补丁应用完成"
+          
+          echo "复制lz4k_oplus补丁..."
+          cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4k_oplus.patch ./
+          patch -p1 -F 3 < lz4k_oplus.patch
+          echo "✅ lz4k_oplus补丁应用完成"
+          
+          echo "✅ ZRAM补丁应用完成"
+
+      # ===== 内核配置 =====
+      - name: Add SUSFS Configuration Settings
+        run: |
+          cd kernel_workspace/kernel_platform
+          echo "配置 SUSFS 相关内核选项..."
+          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+          
+          # ZRAM 配置
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "配置ZRAM选项..."
+            echo "CONFIG_ZSMALLOC=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ZRAM=y" >> ./common/arch/arm64/configs/gki_defconfig
+            
+            # Android 14/15特殊处理
+            if [ "${{ env.ANDROID_VERSION }}" = "android14" ] || [ "${{ env.ANDROID_VERSION }}" = "android15" ]; then
+              echo "应用Android 14/15特殊配置..."
+              echo "CONFIG_MODULE_SIG_FORCE=n" >> ./common/arch/arm64/configs/gki_defconfig
+              
+              if [ -e ./common/modules.bzl ]; then
+                sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./common/modules.bzl"
+              fi
+
+              if [ -e ./msm-kernel/modules.bzl ]; then
+                sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./msm-kernel/modules.bzl"
+                echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/${{ env.CPUD }}-GKI.config"
+                echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/${{ env.CPUD }}-GKI.config"
+              fi
+            fi
+            
+            echo "CONFIG_CRYPTO_LZ4HC=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_CRYPTO_LZ4K=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_CRYPTO_842=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_ZRAM_WRITEBACK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "✅ ZRAM配置完成"
+          fi
+
+          # 移除配置检查
+          sudo sed -i 's/check_defconfig//' ./common/build.config.gki
+          cd common
+          git add -A && git commit -a -m "BUILD Kernel"
+          echo "✅ 内核配置完成"
+      
+      - name: Add KPM Configuration Settings
+        if: ${{ inputs.KPM }}
+        run: |
+          echo "添加KPM配置..."
+          cd kernel_workspace/kernel_platform
+          echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
+          cd common
+          git add -A && git commit -a -m "ADD KPM CONFIG"
+          echo "✅ KPM配置添加完成"
+          
+      - name: 启用LTO
+        if: ${{ fromJSON(github.event.inputs.ENABLE_LTO) }}
+        run: |
+          echo "启用 LTO 优化..."
+          cd kernel_workspace/kernel_platform
+          echo "CONFIG_LTO_CLANG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LTO_CLANG_THIN=y" >> ./common/arch/arm64/configs/gki_defconfig
+          sudo sed -i 's/check_defconfig//' ./common/build.config.gki
+          cd common
+          git add -A && git commit -a -m "BUILD Kernel with LTO enabled"
+          echo "LTO 优化已启用"
+
+      - name: Add make name
+        run: |
+          cd kernel_workspace/kernel_platform
+          echo "设置内核版本名称: ${{ env.KERNEL_NAME }}"
+          sed -i '186s|echo ".*"|echo "${KERNELVERSION}${scm_version}${config_localversion}"|' common/scripts/setlocalversion
+          sed -i "s/\${scm_version}/${{ env.KERNEL_NAME }}/g" ./common/scripts/setlocalversion
+          echo "✅内核名称设置完成: ${{ env.KERNEL_NAME }}"
+
+      - name: 设置 CONFIG_LOCALVERSION
+        run: |
+          cd kernel_workspace/kernel_platform
+          echo "设置内核本地版本后缀: ${{ github.event.inputs.LOCAL_VERSION }}"
+          sed -i 's|CONFIG_LOCALVERSION=".*"|CONFIG_LOCALVERSION="${{ github.event.inputs.LOCAL_VERSION }}"|'  ./common/arch/arm64/configs/gki_defconfig
+          echo "✅ 本地版本后缀设置完成"
+
+      - name: 添加风驰游戏内核
+        run: |
+          echo "添加风驰游戏内核..."
+          cd kernel_workspace/kernel_platform/
+          git clone https://github.com/egcd123/sched_ext.git
+          cp -r ./sched_ext/* ./common/kernel/sched
+          rm -rf ./sched_ext/.git
+          echo "✅ 添加风驰游戏内核完成"       
+           
+ # ===== 内核构建 =====
+      - name: Build Kernel
+        run: |
+          echo "===== 开始内核构建 ====="
+          export PATH="${{ github.workspace }}/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
+          export PATH="/usr/lib/ccache:$PATH" 
+
+          # 设置构建时间戳
+          export KBUILD_BUILD_TIMESTAMP="${{ env.KERNEL_TIME }}"
+          echo "内核构建时间: $KBUILD_BUILD_TIMESTAMP"
+
+          # 设置构建参数 - 使用环境变量中的 SOURCE_DATE_EPOCH
+          export MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang \
+          RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
+          PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
+          LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS=-O2 -Wno-error"
+          
+          echo "编译参数: $MAKE_ARGS"
+          echo "核心数: $(nproc)"
+
+          # 进入源码目录
+          cd kernel_workspace/kernel_platform/common
+
+          # 生成defconfig
+          echo "生成defconfig..."
+          make -j$(nproc) $MAKE_ARGS gki_defconfig
+
+          # 编译内核
+          echo "开始内核编译..."
+          START_TIME=$(date +%s)
+          make -j$(nproc) $MAKE_ARGS all
+          END_TIME=$(date +%s)
+          echo "✅ 内核编译完成! 耗时: $((END_TIME-START_TIME))秒"
+      
+
+         
+      - name: Make AnyKernel3
+        run: |
+           echo "创建AnyKernel3包..."
+           git clone https://github.com/AQ16/AnyKernel3.git AnyKernel3 --depth=1
+           rm -rf ./AnyKernel3/{push.sh,.git}
+           cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
+           echo "✅ AnyKernel3包创建完成"
+         
+      # ===== SUSFS 模块处理 =====
+      - name: Download Latest SUSFS Module from CI
+        if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
+        continue-on-error: true
+        run: |
+          echo "从 CI 下载最新 SUSFS 模块..."
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "::warning::未找到 v1.5.2+ 分支的成功构建"
+          else
+            echo "找到最近成功构建ID: $LATEST_RUN_ID"
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+
+            if [ -n "$ARTIFACT_URL" ]; then
+              echo "下载SUSFS模块: $ARTIFACT_URL"
+              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
+              cp ksu_module_susfs.zip ./AnyKernel3/tools/Others/modules/
+              echo "✅ SUSFS 模块 (CI) 下载完成"
+            else
+              echo "::warning::无法获取 SUSFS 模块 URL"
+            fi
+          fi
+
+      - name: Download Latest SUSFS Module from Release
+        if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
+        continue-on-error: true
+        run: |
+          echo "从 Release 下载最新 SUSFS 模块..."
+          wget -O ksu_module_susfs.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
+          cp ksu_module_susfs.zip ./AnyKernel3/tools/Others/modules/
+          echo "✅ SUSFS 模块 (Release) 下载完成"
+          
+      - name: Download Latest KernelSU-Next APK from CI
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh api \
+            "repos/KernelSU-Next/KernelSU-Next/actions/workflows/build-manager-ci.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id' || echo "")
+
+          if [[ -z "$run_id" ]]; then
+            echo "⚠️ No successful workflow run found. Skipping artifact download."
+          else
+            artifact_url=$(gh api \
+              "repos/KernelSU-Next/KernelSU-Next/actions/runs/$run_id/artifacts" | \
+              jq -r '.artifacts[] | select(.name == "Manager") | .archive_download_url' | head -n1)
+
+            if [[ -z "$artifact_url" ]]; then
+              echo "⚠️ No 'manager' artifact found in run $run_id. Skipping download."
+            else
+              echo "✅ Downloading from: $artifact_url"
+              curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
+              unzip -j manager.zip "*.apk" -d ./AnyKernel3/tools/Others/
+            fi
+          fi        
+
+      - name: Show build artifacts
+        run: |
+          echo "===== 构建产物 ====="
+          ls -lh ./AnyKernel3/
+          echo "===================="
+          
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: KernelSU_Next_${{ env.KSUVER }}_${{ inputs.FEIL }}
+          path: ./AnyKernel3/*
+
+
